@@ -46,6 +46,18 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// a watch to record time
+    stop_watch: usize,
+}
+
+impl TaskManagerInner {
+    /// update start time as current time,
+    /// and return the time between start and now
+    fn refresh_stop_watch(&mut self) -> usize {
+        let start_time = self.stop_watch;
+        self.stop_watch = get_time_us();
+        self.stop_watch - start_time
+    }
 }
 
 lazy_static! {
@@ -57,6 +69,8 @@ lazy_static! {
             task_status: TaskStatus::UnInit,
             syscall_times: [0;MAX_SYSCALL_NUM],
             start_time: 0,
+            user_time: 0,
+            kernel_time: 0,
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -68,6 +82,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    stop_watch: 0,
                 })
             },
         }
@@ -84,6 +99,8 @@ impl TaskManager {
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
+        // begin to record running time
+        inner.refresh_stop_watch();
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -97,6 +114,8 @@ impl TaskManager {
     fn mark_current_suspended(&self) {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
+        // record kernel time
+        inner.tasks[current].kernel_time += inner.refresh_stop_watch();
         inner.tasks[current].task_status = TaskStatus::Ready;
     }
 
@@ -104,6 +123,14 @@ impl TaskManager {
     fn mark_current_exited(&self) {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
+        // record kernel time
+        inner.tasks[current].kernel_time += inner.refresh_stop_watch();
+
+        println!(
+            "[task {} exited. user_time: {} us, kernle_time: {} us.",
+            current, inner.tasks[current].user_time, inner.tasks[current].kernel_time
+        );
+
         inner.tasks[current].task_status = TaskStatus::Exited;
     }
 
@@ -140,6 +167,20 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// record start time in user
+    fn user_time_start(&self) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].kernel_time += inner.refresh_stop_watch();
+    }
+
+    /// record end time in user and start time in kernel
+    fn user_time_end(&self) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].user_time += inner.refresh_stop_watch();
     }
 }
 
@@ -208,4 +249,14 @@ pub fn get_current_start_time() -> usize {
 /// .
 pub fn get_current_running_time_ms() -> usize {
     (get_time_us() - get_current_start_time()) / 1000
+}
+
+/// record end time in kernel and start time in user
+pub fn user_time_start() {
+    TASK_MANAGER.user_time_start()
+}
+
+/// record end time in user and start time in kernel
+pub fn user_time_end() {
+    TASK_MANAGER.user_time_end()
 }

@@ -15,7 +15,9 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{map_with_len, translate_phys_addr_token, unmap_with_len};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_us;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -153,6 +155,52 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn update_syscall_times(&self, syscall_id: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+        0
+    }
+
+    fn get_current_status(&self) -> TaskStatus {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_status
+    }
+
+    fn get_current_syscall_times(&self) -> [u32; 500] {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times
+    }
+
+    fn get_current_start_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
+    }
+
+    fn map_current_with_len(&self, start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        map_with_len(
+            inner.tasks[current].memory_set.get_table_as_mut(),
+            start,
+            len,
+            port,
+        )
+    }
+
+    fn unmap_current_with_len(&self, start: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        unmap_with_len(
+            inner.tasks[current].memory_set.get_table_as_mut(),
+            start,
+            len,
+        )
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +249,44 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// get current task physical page address with a virtual address
+pub fn get_current_phys_addr(virt_add: *const u8) -> usize {
+    translate_phys_addr_token(current_user_token(), virt_add)
+}
+
+/// update task information
+pub fn update_syscall_times(syscall_id: usize) -> isize {
+    TASK_MANAGER.update_syscall_times(syscall_id)
+}
+
+/// return current task status
+pub fn get_current_status() -> TaskStatus {
+    TASK_MANAGER.get_current_status()
+}
+
+/// get current task running time
+pub fn get_current_syscall_times() -> [u32; 500] {
+    TASK_MANAGER.get_current_syscall_times()
+}
+
+/// get current task start time
+pub fn get_current_start_time() -> usize {
+    TASK_MANAGER.get_current_start_time()
+}
+
+/// get current task running time
+pub fn get_current_running_time_ms() -> usize {
+    (get_time_us() - get_current_start_time()) / 1000
+}
+
+/// alloc a len-bytes memory, and map it to a vpn with a start num and port
+pub fn map_current_with_len(start: usize, len: usize, port: usize) -> isize {
+    TASK_MANAGER.map_current_with_len(start, len, port)
+}
+
+/// unmap a len-bytes memory
+pub fn unmap_current_with_len(start: usize, len: usize) -> isize {
+    TASK_MANAGER.unmap_current_with_len(start, len)
 }

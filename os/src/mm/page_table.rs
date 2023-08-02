@@ -1,5 +1,7 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
+use crate::config::PAGE_SIZE;
+
 use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -125,6 +127,31 @@ impl PageTable {
         }
         result
     }
+
+    fn try_map_user(&mut self, vpn: VirtPageNum, flags: PTEFlags) -> isize {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        for (i, idx) in idxs.iter().enumerate() {
+            let pte = &mut ppn.get_pte_array()[*idx];
+
+            if i == 2 && pte.is_valid() {
+                return -1;
+            }
+            if !pte.is_valid() {
+                if let Some(ppn) = self.try_alloc_frame() {
+                    if i == 2 {
+                        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::U);
+                    } else {
+                        *pte = PageTableEntry::new(ppn, PTEFlags::V)
+                    };
+                } else {
+                    return -1;
+                }
+            }
+            ppn = pte.ppn();
+        }
+        0
+    }
     /// set the map between virtual page number and physical page number
     #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
@@ -139,6 +166,16 @@ impl PageTable {
         assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
         *pte = PageTableEntry::empty();
     }
+
+    pub fn try_unmap(&mut self, vpn: VirtPageNum) -> isize {
+        let pte = self.find_pte(vpn).unwrap();
+        if !pte.is_valid() {
+            -1
+        } else {
+            *pte = PageTableEntry::empty();
+            0
+        }
+    }
     /// get the page table entry from the virtual page number
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
@@ -146,6 +183,16 @@ impl PageTable {
     /// get the token from the page table
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
+    }
+
+    fn try_alloc_frame(&mut self) -> Option<PhysPageNum> {
+        if let Some(frame) = frame_alloc() {
+            let ppn = frame.ppn;
+            self.frames.push(frame);
+            Some(ppn)
+        } else {
+            None
+        }
     }
 }
 
@@ -170,4 +217,47 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+pub fn translate_phys_addr(va: VirtAddr, ppn: PhysPageNum) -> usize {
+    super::PhysAddr::from(ppn).0 + va.page_offset()
+}
+
+/// translate a virtual address to a physical address with given token
+pub fn translate_phys_addr_token(token: usize, ptr: *const u8) -> usize {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    let vpn = va.floor();
+    translate_phys_addr(va, page_table.translate(vpn).unwrap().ppn())
+}
+
+/// alloc a len-bytes memory, and map it to a vpn with a start num and port
+pub fn map_with_len(page_table: &mut PageTable, start: usize, len: usize, port: usize) -> isize {
+    if len == 0 {
+        return 0;
+    }
+
+    let page_num = len.div_ceil(PAGE_SIZE);
+    let p = port << 1;
+
+    for i in 0..page_num {
+        let va = VirtAddr::from(start + i * PAGE_SIZE);
+        let flags = PTEFlags::from_bits(p as u8).unwrap();
+        if -1 == page_table.try_map_user(va.into(), flags) {
+            return -1;
+        }
+    }
+    0
+}
+
+/// unmap a len-bytes memory
+pub fn unmap_with_len(page_table: &mut PageTable, start: usize, len: usize) -> isize {
+    let page_num = len.div_ceil(PAGE_SIZE);
+    for i in 0..page_num {
+        let va = VirtAddr::from(start + i * PAGE_SIZE);
+        if -1 == page_table.try_unmap(va.into()) {
+            return -1;
+        }
+    }
+    0
 }

@@ -248,6 +248,11 @@ impl MemorySet {
         }
     }
 
+    /// get page table as mut
+    pub fn get_table_as_mut(&mut self) -> &mut PageTable {
+        &mut self.page_table
+    }
+
     /// append the area to new_end
     #[allow(unused)]
     pub fn append_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {

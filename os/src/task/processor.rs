@@ -7,7 +7,9 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_us;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -47,6 +49,7 @@ impl Processor {
 }
 
 lazy_static! {
+    /// a `Processor` global instance through lazy_static!
     pub static ref PROCESSOR: UPSafeCell<Processor> = unsafe { UPSafeCell::new(Processor::new()) };
 }
 
@@ -108,4 +111,51 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// get current task status
+pub fn current_status() -> TaskStatus {
+    current_task().unwrap().inner_exclusive_access().task_status
+}
+
+/// get current task sycall times array
+pub fn current_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .syscall_times
+}
+
+/// get current task running time as ms
+pub fn current_running_time_ms() -> usize {
+    let start = current_task().unwrap().inner_exclusive_access().start_time;
+    (get_time_us() - start) / 1000
+}
+
+/// alloc a len-bytes memory, and map it to a vpn with a start address and port
+pub fn map_current_with_len(start: usize, len: usize, port: usize) -> isize {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .page_tabel_mut()
+        .map_with_len(start, len, port)
+}
+
+/// remove the map between virtual page number and physical page number with a start address and len
+pub fn unmap_current_with_len(start: usize, len: usize) -> isize {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .page_tabel_mut()
+        .unmap_with_len(start, len)
+}
+
+/// add 1 to current task syscall time with given id
+pub fn update_current_syscall_times(syscall_id: usize) {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .syscall_times[syscall_id] += 1;
 }

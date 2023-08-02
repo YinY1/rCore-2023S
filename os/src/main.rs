@@ -23,6 +23,7 @@
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+#![feature(int_roundings)]
 
 #[macro_use]
 extern crate bitflags;

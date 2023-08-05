@@ -105,6 +105,8 @@ pub fn rust_main() -> ! {
     kernel_log_info();
     mm::init();
     mm::remap_test();
+    task::stride_test();
+    task::stride_heap_test();
     task::add_initproc();
     println!("after initproc!");
     trap::init();

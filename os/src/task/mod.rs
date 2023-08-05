@@ -17,6 +17,7 @@ mod context;
 mod id;
 mod manager;
 mod processor;
+mod stride;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
@@ -25,6 +26,7 @@ use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
+pub use stride::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
@@ -42,6 +44,8 @@ pub fn suspend_current_and_run_next() {
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
+    // add pass to task stride
+    task_inner.update_pass();
     drop(task_inner);
     // ---- release current PCB
 

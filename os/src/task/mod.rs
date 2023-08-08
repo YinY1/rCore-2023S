@@ -21,6 +21,7 @@ mod stride;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
+mod dynamic_mlfq;
 
 use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;

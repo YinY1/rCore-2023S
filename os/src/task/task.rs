@@ -99,11 +99,15 @@ pub struct TaskControlBlockInner {
     /// Task start running time
     pub start_time: usize,
 
-    /// Process/Task priority, assume >=2
+    /// Process/Task priority, assume >=2 in stride method
+    /// 
+    /// assume 0 is highest and 15 is lowest in mlfq
     pub priority: usize,
 
     /// Task stride represents a length that task has run.
+    /// 
     /// In stride method, manager picks a task has the smallest stride to run.
+    /// 
     /// When turns to another task, stride will be added a pass. 
     pub stride: Stride,
 }

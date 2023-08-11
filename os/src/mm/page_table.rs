@@ -1,4 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
+use crate::config::PAGE_SIZE;
+
 use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::string::String;
 use alloc::vec;
@@ -132,6 +134,59 @@ impl PageTable {
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
     }
+
+    /// alloc a len-bytes memory, and map it to a vpn with a start address and port
+    pub fn map_with_len(&mut self, start: usize, len: usize, port: usize) -> isize {
+        if len == 0 {
+            return 0;
+        }
+
+        let page_num = len.div_ceil(PAGE_SIZE);
+        let p = port << 1;
+
+        for i in 0..page_num {
+            let va = VirtAddr::from(start + i * PAGE_SIZE);
+            let flags = PTEFlags::from_bits(p as u8).unwrap();
+            if -1 == self.try_map_user(va.into(), flags) {
+                return -1;
+            }
+        }
+        0
+    }
+    fn try_map_user(&mut self, vpn: VirtPageNum, flags: PTEFlags) -> isize {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        for (i, idx) in idxs.iter().enumerate() {
+            let pte = &mut ppn.get_pte_array()[*idx];
+
+            if i == 2 && pte.is_valid() {
+                return -1;
+            }
+            if !pte.is_valid() {
+                if let Some(ppn) = self.try_alloc_frame() {
+                    if i == 2 {
+                        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V | PTEFlags::U);
+                    } else {
+                        *pte = PageTableEntry::new(ppn, PTEFlags::V)
+                    };
+                } else {
+                    return -1;
+                }
+            }
+            ppn = pte.ppn();
+        }
+        0
+    }
+    fn try_alloc_frame(&mut self) -> Option<PhysPageNum> {
+        if let Some(frame) = frame_alloc() {
+            let ppn = frame.ppn;
+            self.frames.push(frame);
+            Some(ppn)
+        } else {
+            None
+        }
+    }
+
     /// remove the map between virtual page number and physical page number
     #[allow(unused)]
     pub fn unmap(&mut self, vpn: VirtPageNum) {
@@ -139,6 +194,22 @@ impl PageTable {
         assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
         *pte = PageTableEntry::empty();
     }
+
+    /// remove the map between virtual page number and physical page number with a start address and len(ceil to PAGE_SIZE)
+    pub fn unmap_with_len(&mut self, start_virt_addr: usize, len: usize) -> isize {
+        let page_num = len.div_ceil(PAGE_SIZE);
+        for i in 0..page_num {
+            let vpn = VirtAddr::from(start_virt_addr + i * PAGE_SIZE).into();
+            let pte = self.find_pte(vpn).unwrap();
+            if !pte.is_valid() {
+                return -1;
+            } else {
+                *pte = PageTableEntry::empty();
+            }
+        }
+        0
+    }
+
     /// get the page table entry from the virtual page number
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)

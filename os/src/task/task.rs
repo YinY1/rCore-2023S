@@ -1,7 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
+use super::stride::{Stride, BIG_STRIDE};
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -38,6 +39,29 @@ impl TaskControlBlock {
     }
 }
 
+impl Ord for TaskControlBlock {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl PartialOrd for TaskControlBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.inner_exclusive_access()
+            .stride
+            .partial_cmp(&other.inner_exclusive_access().stride)
+    }
+}
+
+impl PartialEq for TaskControlBlock {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Eq for TaskControlBlock {}
+
+const BASIC_PRIORITY: usize = 16;
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
     pub trap_cx_ppn: PhysPageNum,
@@ -71,6 +95,24 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task sycall times array
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// Task start running time
+    pub start_time: usize,
+
+    /// Process/Task priority, assume >=2 in stride method
+    /// 
+    /// assume 0 is highest and 15 is lowest in mlfq
+    pub priority: usize,
+
+    /// Task stride represents a length that task has run.
+    /// 
+    /// In stride method, manager picks a task has the smallest stride to run.
+    /// 
+    /// When turns to another task, stride will be added a pass. 
+    pub stride: Stride,
 }
 
 impl TaskControlBlockInner {
@@ -93,6 +135,12 @@ impl TaskControlBlockInner {
             self.fd_table.push(None);
             self.fd_table.len() - 1
         }
+    }
+    pub fn update_pass(&mut self) {
+        self.stride.add(self.get_pass());
+    }
+    pub fn get_pass(&self) -> usize {
+        BIG_STRIDE / self.priority
     }
 }
 
@@ -135,6 +183,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_time: 0,
+                    priority: BASIC_PRIORITY,
+                    stride: 0.into(),
                 })
             },
         };
@@ -216,6 +268,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: parent_inner.syscall_times,
+                    start_time: parent_inner.start_time,
+                    priority: BASIC_PRIORITY,
+                    stride: 0.into(),
                 })
             },
         });

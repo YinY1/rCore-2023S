@@ -19,11 +19,11 @@
 //! userspace.
 
 #![deny(missing_docs)]
-#![deny(warnings)]
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+#![feature(int_roundings)]
 
 #[macro_use]
 extern crate bitflags;
@@ -70,6 +70,8 @@ pub fn rust_main() -> ! {
     logging::init();
     mm::init();
     mm::remap_test();
+    task::stride_test();
+    task::stride_heap_test();
     trap::init();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();

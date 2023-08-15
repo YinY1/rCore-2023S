@@ -181,12 +181,12 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(path: *const u8) -> isize {
     trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
-    let app_path = translated_str(current_user_token(), path);
+    let token = current_user_token();
+    let path = translated_str(token, path);
     // spawn a child process from app path
-    if let Some(app_inode) = open_file(app_path.as_str(), OpenFlags::RDONLY) {
-        println!("spawn open file");
-        let data = app_inode.read_all();
-        let new_task = Arc::new(TaskControlBlock::new(data.as_slice()));
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
+        /* let new_task = Arc::new(TaskControlBlock::new(all_data.as_slice()));
         let new_pid = new_task.pid.0;
         let parent = current_task().unwrap();
         parent
@@ -194,7 +194,12 @@ pub fn sys_spawn(path: *const u8) -> isize {
             .children
             .push(new_task.clone());
         new_task.inner_exclusive_access().parent = Some(Arc::downgrade(&parent));
-        println!("spawn add task");
+        add_task(new_task); 
+        // 我不知道为什么这个是错的，反而下面这个更怪？
+        */ 
+        let new_task = current_task().unwrap().fork();
+        let new_pid = new_task.pid.0;
+        new_task.exec(&all_data);
         add_task(new_task);
         new_pid as isize
     } else {

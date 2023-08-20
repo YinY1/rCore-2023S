@@ -7,7 +7,7 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Banker, Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -49,6 +49,12 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// banker algorithm for mutex
+    pub mutex_banker: Banker,
+    /// banker algorithm for semaphore
+    pub semaphore_banker: Banker,
+    /// enable deadlock check?
+    pub deadlock_detect: bool,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +87,44 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    /// add locks resource when creating new threads
+    pub fn new_lock_resource(&mut self, tid: usize) {
+        self.mutex_banker.add_thread(tid);
+        self.semaphore_banker.add_thread(tid);
+    }
+    /// mutex check
+    pub fn mutex_deadlock_check(&mut self, tid: usize, mutex_id: usize) -> bool {
+        if !self.deadlock_detect {
+            return false;
+        }
+        self.mutex_banker.is_deadlock(tid, mutex_id)
+    }
+    pub fn mutex_lock(&mut self, tid: usize, mutex_id: usize) {
+        if self.deadlock_detect {
+            self.mutex_banker.lock(tid, mutex_id);
+        }
+    }
+    pub fn mutex_unlock(&mut self, tid: usize, mutex_id: usize) {
+        if self.deadlock_detect {
+            self.mutex_banker.unlock(tid, mutex_id);
+        }
+    }
+    pub fn semaphore_deadlock_check(&mut self, tid: usize, sem_id: usize) -> bool {
+        if !self.deadlock_detect {
+            return false;
+        }
+        self.semaphore_banker.is_deadlock(tid, sem_id)
+    }
+    pub fn semaphore_down(&mut self, tid: usize, sem_id: usize) {
+        if self.deadlock_detect {
+            self.semaphore_banker.lock(tid, sem_id);
+        }
+    }
+    pub fn semaphore_up(&mut self, tid: usize, sem_id: usize) {
+        if self.deadlock_detect {
+            self.semaphore_banker.unlock(tid, sem_id);
+        }
     }
 }
 
@@ -119,6 +163,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    mutex_banker: Banker::new(),
+                    semaphore_banker: Banker::new(),
+                    deadlock_detect: false,
                 })
             },
         });
@@ -245,6 +292,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    mutex_banker: Banker::new(),
+                    semaphore_banker: Banker::new(),
+                    deadlock_detect: false,
                 })
             },
         });
